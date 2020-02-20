@@ -9,6 +9,17 @@
 配布されている学習済みモデルpickleの内部で色々と参照されているので，
 再現ができたかの確認や重みの変換には著者コード(TensorFlow実装)が必要である．
 
+## 結果
+
+- 著者オリジナル実装 StyleGAN1
+![tf_stylegan1](./img/stylegan1_tf_compression.jpg)
+- 再現実装 StyleGAN1
+![pt_stylegan1](./img/stylegan1_pt_compression.jpg)
+- 著者オリジナル実装 StyleGAN2
+![tf_stylegan2](./img/stylegan2_tf_compression.jpg)
+- 再現実装 StyleGAN2
+![pt_stylegan2](./img/stylegan2_pt_compression.jpg)
+
 ## 入出力用ディレクトリの準備
 重みの変換/再現の確認の際に以下のものが入力/出力される
 
@@ -113,9 +124,9 @@ python stylegans-pytorch/run_pt_stylegan2.py -w $STYLEGANSDIR -o $STYLEGANSDIR
 ```
 
 
-# 特殊な部分
+## 特殊な部分/細かな違い
 
-## 画像拡大操作
+### 画像拡大操作/ブラー
 StyleGANの解像度をあげるためのConvolutionについて，
 基本的にはTransposedConvolutionを利用するが，
 後続のBlurレイヤーとの兼ね合いもあっていくつかの実装方法が存在する．
@@ -130,3 +141,20 @@ StyleGANの論文で引用している論文では信号処理的な観点から
 upsampleを行ってconvolutionをすると計算量的に重くなるので，
 ほぼ同値な方法として3x3の畳み込みフィルタを学習させたい.
 1と2はほぼ同値である.
+
+### ノイズの入れ方
+StyleGANでは全ピクセルに対してノイズを入れる．
+
+
+StyleGAN1では固定ノイズは (H,W) で保持しておいて，
+ノイズの重みを (C,) で保持．
+
+StyleGAN2では固定ノイズは (H,W) で保持しておいて，
+ノイズの重みを (1,) = スカラー で保持．
+
+### 増幅
+StyleGAN1とStyleGAN2で増幅処理している場所が違う．
+
+## TODO
+- style mixingもやる
+- StyleGAN1 の結果が微妙なので原因特定する
