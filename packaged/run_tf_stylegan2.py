@@ -1,8 +1,8 @@
 
 from pathlib import Path
-from tempfile import TemporaryDirectory
 import argparse
 import pickle
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import PIL.Image
@@ -19,15 +19,6 @@ def parse_args():
     parser.add_argument('-o','--output_dir',type=str,default='/tmp/stylegans-pytorch',
                             help='生成された画像を保存する場所')
     return parser.parse_args()
-
-
-# tensorflowの出力を正規化
-def convert_images_to_uint8(images):
-    images = tf.cast(images, tf.float32)
-    images = tf.transpose(images, [0, 2, 3, 1])
-    images = (images+1.0) / 2.0 * 255.0
-    images = tf.saturate_cast(images, tf.uint8)
-    return images
 
 
 # tensorflowの初期化
@@ -47,13 +38,28 @@ def init_tf():
     return session
 
 
+# tensorflowの出力を正規化
+def convert_images_to_uint8(images):
+    images = tf.cast(images, tf.float32)
+    images = tf.transpose(images, [0, 2, 3, 1])
+    images = (images+1.0) / 2.0 * 255.0
+    images = tf.saturate_cast(images, tf.uint8)
+    return images
+
+
 # 画像生成関数(dnnlib.submit_runに渡すコールバック関数)
 def generate_images(args):
-
+    file_names = {
+        'input_weight'  : 'stylegan2-ffhq-config-f.pkl',
+        'output_weight' : 'stylegan2_ndarray.pkl',
+        'used_latents'  : 'latents2.pkl',
+        'output_image'  : 'stylegan2_tf.png',
+    }
+    
     init_tf()
 
     # 配布されている重みの読み込み
-    with (Path(args.weight_dir)/'stylegan2-ffhq-config-f.pkl').open('rb') as f:
+    with (Path(args.weight_dir)/file_names['input_weight']).open('rb') as f:
         *_, Gs = pickle.load(f)
     
     # 重みをnumpy形式に変換
@@ -62,18 +68,18 @@ def generate_images(args):
 
     # 重みをnumpy形式で保存
     print('weight save...')
-    with (Path(args.weight_dir)/'stylegan2_ndarray.pkl').open('ab') as f:
+    with (Path(args.weight_dir)/file_names['output_weight']).open('wb') as f:
         pickle.dump(ndarrays,f)
 
 
     # 画像を出力してみる
     print('run network')
-
+    
     # 出力する個数，解像度
     num_H, num_W = 4,4
     num_images = num_H*num_W
     H = W = 1024
-
+    
     # 出力を並べる関数
     def make_table(imgs):
         canvas = np.zeros((H*num_H,W*num_W,3),dtype=np.uint8)
@@ -84,17 +90,17 @@ def generate_images(args):
 
     # 乱数シードを固定，潜在変数の取得・保存
     latents = np.random.RandomState(5).randn(num_images, 512)
-    with (Path(args.output_dir)/'latents2.pkl').open('ab') as f:
+    with (Path(args.output_dir)/file_names['used_latents']).open('wb') as f:
         pickle.dump(latents, f)
 
     images = Gs.run(latents, None, truncation_psi=0.7, randomize_noise=False,
                         output_transform= {'func': convert_images_to_uint8})
-    
+
     # 画像の保存
-    PIL.Image.fromarray(make_table(images)).save(Path(args.output_dir)/'stylegan2_tf.png')
+    PIL.Image.fromarray(make_table(images)).save(Path(args.output_dir)/file_names['output_image'])
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args = parse_args()
 
     with TemporaryDirectory() as dir_name:

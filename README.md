@@ -9,34 +9,75 @@
 配布されている学習済みモデルpickleの内部で色々と参照されているので，
 再現ができたかの確認や重みの変換には著者コード(TensorFlow実装)が必要である．
 
-## 結果
+## 再現結果
 
 - 著者オリジナル実装 StyleGAN1
-![tf_stylegan1](./img/stylegan1_tf_compression.jpg)
+![tf_stylegan1結果圧縮画像](./img/stylegan1_tf_compression.jpg)
 - 再現実装 StyleGAN1
-![pt_stylegan1](./img/stylegan1_pt_compression.jpg)
+![pt_stylegan1結果圧縮画像](./img/stylegan1_pt_compression.jpg)
 - 著者オリジナル実装 StyleGAN2
-![tf_stylegan2](./img/stylegan2_tf_compression.jpg)
+![tf_stylegan2結果圧縮画像](./img/stylegan2_tf_compression.jpg)
 - 再現実装 StyleGAN2
-![pt_stylegan2](./img/stylegan2_pt_compression.jpg)
+![pt_stylegan2結果圧縮画像](./img/stylegan2_pt_compression.jpg)
 
-## 入出力用ディレクトリの準備
-重みの変換/再現の確認の際に以下のものが入力/出力される
+## ディレクトリ構成
+### はじめに
+著者配布の学習済みモデルから重みを抽出するには
+著者配布コードを利用するしかありません．
+オリジナルのリポジトリを clone してここにあるコードをコピーして使ってください．  
+依存環境が把握しやすいように，
+StyleGANv1とStyleGANv2でコードを共通化せず
+全てのコードを1ファイルにまとめてあります．  
+同様の形式でPyTorch再現実装版も1ファイルにまとめたものを用意しておきました．  
+PyTorch再現実装版はコードの共通化をしたものも用意してあり，
+StyleGANv1,StyleGANv2の違う部分だけを確認しやすいようにしておきました．
 
-- 学習済みモデル (配布されているものをダウンロード)
-- 学習済みモデル (``run_tf_stylegan.py``でnumpy形式に変換)
-- 出力結果写真 (``run_tf_stylegan.py``で著者実装モデルから出力)
-- 入力潜在変数 (``run_tf_stylegan.py``で使用したものを記録)
-- 出力結果写真 (``run_pt_stylegan.py``で本実装から出力)
-- 学習済みモデル (``run_pt_stylegan.py``でnumpy形式から変換)
+### ディレクトリの構成
+```
+- workdir/
+    - stylegans-pytorch/    本リポジトリ
+        - img/              : 再現結果
+        - network/          : StyleGANの構造 (PyTorch) 
+        - packaged/         : StyleGANを動作させるコード (tf/pt) 1ファイルにまとめられている
+        - conda_env.txt     : 動作確認済み環境
+        - docker_install.md : Dockerインストール方法について
+        - README.md         : 説明 (このファイル)
+    - stylegan/             著者オリジナル https://github.com/NVlabs/stylegan
+    - stylegan2/            著者オリジナル https://github.com/NVlabs/stylegan2
+- /wherever/you/want/
+    - karras2019stylegan-ffhq-1024x1024.pkl : 著者配布学習済みモデル for StyleGANv1
+    - stylegan2-ffhq-config-f.pkl           : 著者配布学習済みモデル for StyleGANv2
+```
+
+### 入出力用ディレクトリ
+重みの変換/再現の確認の際に以下のものが入力/出力される (以下の表はStyleGANv2のもの)
+
+| dir type | tf | pt | summary | file name | detail |
+| --- | --- | --- | ---- | ---- | ---- |
+| w | IN  | -   | 学習済みモデル | ``stylegan2-ffhq-config-f.pkl`` | 配布されているものをダウンロード                |
+| w | OUT | IN  | 学習済みモデル | ``stylegan2_ndarray.pkl``       | ``run_tf_stylegan2.py``でnumpy形式に変換        |
+| o | OUT | IN  | 入力潜在変数   | ``latent2.pkl``                 | ``run_tf_stylegan2.py``で使用したものを記録     |
+| o | OUT | IN  | 出力結果写真   | ``stylegan2_tf.png``            | ``run_tf_stylegan2.py``で著者実装モデルから出力 |
+| o | -   | OUT | 出力結果写真   | ``stylegan2_pt.png``            | ``run_pt_stylegan2.py``で本実装から出力         |
+| w | -   | OUT | 学習済みモデル | ``stylegan2_state_dict.pth``    | ``run_pt_stylegan2.py``でnumpy形式から変換      |
+
+- dir type : w = weight directory, o = output directory  
+それぞれ別のディレクトリを指定することができる．
+以下で説明する使い方では w と o は同じディレクトリとしている．
+
+---
+
+## 実行方法
+
+### 1. 入出力用ディレクトリの準備
 
 以下のように用意
 ```
-export STYLEGANSDIR=/tmp/stylegans-pytorch
+export STYLEGANSDIR=/wherever/you/want
 mkdir -p $STYLEGANSDIR
 ```
 
-## 重みのダウンロード
+### 2. 重みのダウンロード
 再現実装の動作確認にはオリジナルの学習済みモデルと，
 生成器の出力を保存するためのディレクトリが必要．
 ```
@@ -50,7 +91,7 @@ Googleドライブはダウンロード回数制限がある(？)ためか動か
 GUIのブラウザから直接アクセスするほうが良いかもしれません．
 
 
-## コードの用意
+### 3. コードの用意
 著者オリジナル実装と本レポジトリをダウンロード.
 ```
 mkdir stylegans
@@ -60,7 +101,7 @@ git clone https://github.com/NVlabs/stylegan2.git
 git clone https://github.com/yuuho/stylegans-pytorch.git
 ```
 
-## 環境構築
+### 4. 環境構築
 StyleGANv1のほうは著者オリジナル実装(tensorflow)も再現実装(pytorch)もcondaのみで環境構築可能．
 ```
 conda create -y -n stylegans numpy scipy opencv tensorflow-gpu=1.14 tensorboard lmdb requests pytorch -c pytorch
@@ -75,36 +116,38 @@ conda activate stylegans
 conda create -y -n stylegans -f conda_env.txt
 ```
 
-StyleGANv2のほうは著者オリジナル実装(tensorflow)はnvccが必要なのでDockerのが良い．
+StyleGANv2のほうは，著者オリジナル実装(tensorflow)は
+CUDAコードが含まれておりnvccによるコンパイル環境が必要なのでDockerのが良い．
 rootless環境でも動くはず．rootlessやりたい場合は [インストール方法](docker_install.md) を見る．
+
+Dockerイメージのビルドは ``workdir``で
 ```
 docker build -t tkarras/stylegan2:latest ./stylegan2
 ```
 再現実装(pytorch)に関してはStyleGANv1と同じ環境で動く．
 
 
-## 動かす
-### StyleGAN (v1)
-
-#### tensorflow
+### 5. 動かす
+#### 5.1. StyleGAN (v1) tensorflow
+``workdir``で
 ```
-cp stylegans-pytorch/run_tf_stylegan1.py stylegan/
+cp stylegans-pytorch/packaged/run_tf_stylegan1.py stylegan/
 cd stylegan
 python run_tf_stylegan1.py -w $STYLEGANSDIR -o $STYLEGANSDIR
 cd -
 ```
 
-#### pytorch
+#### 5.2. StyleGAN (v1) pytorch
+``workdir``で
 ```
-python stylegans-pytorch/run_pt_stylegan1.py -w $STYLEGANSDIR -o $STYLEGANSDIR
+python stylegans-pytorch/packaged/run_pt_stylegan1.py -w $STYLEGANSDIR -o $STYLEGANSDIR
 ```
 
-### StyleGAN (v2)
-
-#### tensorflow
+#### 5.3. StyleGAN (v2) tensorflow
 著者Docker環境で実行する．
+``workdir``で
 ```
-cp stylegans-pytorch/run_tf_stylegan2.py stylegan2/
+cp stylegans-pytorch/packaged/run_tf_stylegan2.py stylegan2/
 docker run --gpus all -v $PWD/stylegan2:/workdir \
             -w /workdir -v $STYLEGANSDIR:/stylegans-pytorch \
             -it --rm tkarras/stylegan2:latest
@@ -117,16 +160,18 @@ Dockerがrootlessでないなら出力したファイルを読めるようにす
 sudo chown -R $(whoami) $STYLEGANSDIR
 ```
 
-#### pytorch
+#### 5.4. StyleGAN (v2) pytorch
 
+``workdir``で
 ```
-python stylegans-pytorch/run_pt_stylegan2.py -w $STYLEGANSDIR -o $STYLEGANSDIR
+python stylegans-pytorch/packaged/run_pt_stylegan2.py -w $STYLEGANSDIR -o $STYLEGANSDIR
 ```
 
+---
 
 ## 特殊な部分/細かな違い
 
-### 画像拡大操作/ブラー
+### 1. 画像拡大操作/ブラー
 StyleGANの解像度をあげるためのConvolutionについて，
 基本的にはTransposedConvolutionを利用するが，
 後続のBlurレイヤーとの兼ね合いもあっていくつかの実装方法が存在する．
@@ -142,7 +187,7 @@ upsampleを行ってconvolutionをすると計算量的に重くなるので，
 ほぼ同値な方法として3x3の畳み込みフィルタを学習させたい.
 1と2はほぼ同値である.
 
-### ノイズの入れ方
+### 2. ノイズの入れ方
 StyleGANでは全ピクセルに対してノイズを入れる．
 
 StyleGAN1では固定ノイズは (H,W) で保持しておいて，
@@ -151,7 +196,7 @@ StyleGAN1では固定ノイズは (H,W) で保持しておいて，
 StyleGAN2では固定ノイズは (H,W) で保持しておいて，
 ノイズの重みを (1,) = スカラー で保持．
 
-### 増幅
+### 3. 増幅
 StyleGAN1とStyleGAN2で増幅処理している場所が違う．
 元の実装では gain という変数に √2 などが設定されていて，
 convやfcの後に強制的に特徴マップを増幅していた．
@@ -166,4 +211,4 @@ convやfcの後に強制的に特徴マップを増幅していた．
 
 ## TODO
 - style mixingもやる
-- リポジトリルートにある one_fileなスクリプトをリファクタリングする．
+- StyleGANv2 の色味が違う原因を特定

@@ -1,16 +1,14 @@
-'''
-# ここでやること
-- tensorflowの学習済みモデルから重みをnumpy ndarray形式で抽出
-- 固定の潜在変数で画像を出力
-- 潜在変数も保存しておく
-'''
-from pathlib import Path
-import pickle
-import argparse
 
-import tensorflow as tf
+from pathlib import Path
+import argparse
+import pickle
+# from tempfile import TemporaryDirectory
+
 import numpy as np
-import cv2
+import PIL.Image
+import tensorflow as tf
+
+# import dnnlib
 
 
 # コマンドライン引数の取得
@@ -49,13 +47,19 @@ def convert_images_to_uint8(images):
     return images
 
 
-if __name__ == '__main__':
-    args = parse_args()
-
+# メイン関数
+def generate_images(args):
+    file_names = {
+        'input_weight'  : 'karras2019stylegan-ffhq-1024x1024.pkl',
+        'output_weight' : 'stylegan1_ndarray.pkl',
+        'used_latents'  : 'latents1.pkl',
+        'output_image'  : 'stylegan1_tf.png',
+    }
+    
     init_tf()
 
     # 配布されている重みの読み込み
-    with (Path(args.weight_dir)/'karras2019stylegan-ffhq-1024x1024.pkl').open('rb') as f:
+    with (Path(args.weight_dir)/file_names['input_weight']).open('rb') as f:
         *_, Gs = pickle.load(f)
     
     # 重みをnumpy形式に変換
@@ -64,7 +68,7 @@ if __name__ == '__main__':
 
     # 重みをnumpy形式で保存
     print('weight save...')
-    with (Path(args.weight_dir)/'stylegan1_ndarray.pkl').open('ab') as f:
+    with (Path(args.weight_dir)/file_names['output_weight']).open('wb') as f:
         pickle.dump(ndarrays,f)
 
 
@@ -81,19 +85,22 @@ if __name__ == '__main__':
         canvas = np.zeros((H*num_H,W*num_W,3),dtype=np.uint8)
         for i,p in enumerate(imgs):
             h,w = i//num_W, i%num_W
-            canvas[H*h:H*-~h,W*w:W*-~w,:] = p[:,:,::-1]
+            canvas[H*h:H*-~h,W*w:W*-~w,:] = p
         return canvas
 
     # 乱数シードを固定，潜在変数の取得・保存
     latents = np.random.RandomState(5).randn(num_images, 512)
-    with (Path(args.output_dir)/'latents1.pkl').open('ab') as f:
+    with (Path(args.output_dir)/file_names['used_latents']).open('wb') as f:
         pickle.dump(latents, f)
 
-    # ネットワークに通す
     images = Gs.run(latents, None, truncation_psi=0.7, randomize_noise=False,
                         output_transform= {'func': convert_images_to_uint8})
 
     # 画像の保存
-    cv2.imwrite(str(Path(args.output_dir)/'stylegan1_tf.png'), make_table(images))
+    PIL.Image.fromarray(make_table(images)).save(Path(args.output_dir)/file_names['output_image'])
 
-    print('done.')
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    generate_images(args)
