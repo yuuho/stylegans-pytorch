@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from common import PixelwiseNormalization, Amplify, AddBias, EqualizedFullyConnect, TruncationTrick
+from common import PixelwiseNormalization, Amplify, AddChannelwiseBias, EqualizedFullyConnect, TruncationTrick
 
 
 # 固定ノイズ
@@ -54,14 +54,15 @@ class EqualizedModulatedConvTranspose2d(nn.Module):
         torch.nn.init.normal_(self.weight.data, mean=0.0, std=1.0/lr)
         self.weight_scaler = 1 / (in_channels * kernel_size*kernel_size)**0.5 * lr
 
-        self.fc = EqualizedFullyConnect(style_dim, in_channels, lr=1)
+        self.fc = EqualizedFullyConnect(style_dim, in_channels, lr)
+        self.bias = AddChannelwiseBias(in_channels, lr)
 
     def forward(self, pack):
         x, style = pack
         N, iC, H, W = x.shape
         iC, oC, kH, kW = self.weight.shape
 
-        mod_rates = self.fc(style)+1
+        mod_rates = self.bias(self.fc(style))+1
         modulated_weight = self.weight_scaler*self.weight.view(1,iC,oC,kH,kW) * mod_rates.view(N,iC,1,1,1)
 
         if self.demodulate:
@@ -92,14 +93,15 @@ class EqualizedModulatedConv2d(nn.Module):
         torch.nn.init.normal_(self.weight.data, mean=0.0, std=1.0/lr)
         self.weight_scaler = 1 / (in_channels*kernel_size*kernel_size)**0.5 * lr
         
-        self.fc = EqualizedFullyConnect(style_dim, in_channels, lr=1)
+        self.fc = EqualizedFullyConnect(style_dim, in_channels, lr)
+        self.bias = AddChannelwiseBias(in_channels, lr)
 
     def forward(self, pack):
         x, style = pack
         N, iC, H, W = x.shape
         oC, iC, kH, kW = self.weight.shape
 
-        mod_rates = self.fc(style)+1 # (N, iC)
+        mod_rates = self.bias(self.fc(style))+1 # (N, iC)
         modulated_weight = self.weight_scaler*self.weight.view(1,oC,iC,kH,kW) \
                                 * mod_rates.view(N,1,iC,1,1) # (N,oC,iC,kH,kW)
 
@@ -117,10 +119,10 @@ class EqualizedModulatedConv2d(nn.Module):
 class Generator(nn.Module):
 
     structure = {
-        'mapping': [['pixel_norm'],['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],['truncation']],
+        'mapping': [['pixel_norm'], ['fc',512,512],['b',512],['amp'],['Lrelu'],['fc',512,512],['b',512],['amp'],['Lrelu'],
+                                    ['fc',512,512],['b',512],['amp'],['Lrelu'],['fc',512,512],['b',512],['amp'],['Lrelu'],
+                                    ['fc',512,512],['b',512],['amp'],['Lrelu'],['fc',512,512],['b',512],['amp'],['Lrelu'],
+                                    ['fc',512,512],['b',512],['amp'],['Lrelu'],['fc',512,512],['b',512],['amp'],['Lrelu'],['truncation']],
         'Fconv4'   : [['EqModConv3x3',  512, 512],             ['noiseP',   4], ['bias',512], ['amp'], ['Lrelu'] ],  'toRGB_4'   : [['EqModConv1x1',512, 3], ['bias',3]],
         'Uconv8'   : [['EqModConvT3x3', 512, 512], ['blurEX'], ['noiseP',   8], ['bias',512], ['amp'], ['Lrelu'] ],
         'Fconv8'   : [['EqModConv3x3',  512, 512],             ['noiseP',   8], ['bias',512], ['amp'], ['Lrelu'] ],  'toRGB_8'   : [['EqModConv1x1',512, 3], ['bias',3]],
@@ -147,7 +149,8 @@ class Generator(nn.Module):
                                     num_target=10, threshold=0.7, output_num=18, style_dim=512),
             'fc'           :    lambda *config: EqualizedFullyConnect(
                                     in_dim=config[0], out_dim=config[1], lr=0.01),
-            'bias'         :    lambda *config: AddBias(out_channels=config[0], lr=1.0),
+            'b'            :    lambda *config: AddChannelwiseBias(out_channels=config[0], lr=0.01),
+            'bias'         :    lambda *config: AddChannelwiseBias(out_channels=config[0], lr=1.0),
             'amp'          :    lambda *config: Amplify(2**0.5),
             'Lrelu'        :    lambda *config: nn.LeakyReLU(negative_slope=0.2),
             'EqModConvT3x3':    lambda *config: EqualizedModulatedConvTranspose2d(
@@ -213,158 +216,158 @@ name_trans_dict = {
     'const_input'              : ['any', 'G_synthesis/4x4/Const/const'                  ],
     'style_mixing_rate'        : ['uns', 'lod'                                          ],
     'mapping.1.weight'         : ['fc_', 'G_mapping/Dense0/weight'                      ],
-    'mapping.1.bias'           : ['any', 'G_mapping/Dense0/bias'                        ],
-    'mapping.4.weight'         : ['fc_', 'G_mapping/Dense1/weight'                      ],
-    'mapping.4.bias'           : ['any', 'G_mapping/Dense1/bias'                        ],
-    'mapping.7.weight'         : ['fc_', 'G_mapping/Dense2/weight'                      ],
-    'mapping.7.bias'           : ['any', 'G_mapping/Dense2/bias'                        ],
-    'mapping.10.weight'        : ['fc_', 'G_mapping/Dense3/weight'                      ],
-    'mapping.10.bias'          : ['any', 'G_mapping/Dense3/bias'                        ],
-    'mapping.13.weight'        : ['fc_', 'G_mapping/Dense4/weight'                      ],
-    'mapping.13.bias'          : ['any', 'G_mapping/Dense4/bias'                        ],
-    'mapping.16.weight'        : ['fc_', 'G_mapping/Dense5/weight'                      ],
-    'mapping.16.bias'          : ['any', 'G_mapping/Dense5/bias'                        ],
-    'mapping.19.weight'        : ['fc_', 'G_mapping/Dense6/weight'                      ],
-    'mapping.19.bias'          : ['any', 'G_mapping/Dense6/bias'                        ],
-    'mapping.22.weight'        : ['fc_', 'G_mapping/Dense7/weight'                      ],
-    'mapping.22.bias'          : ['any', 'G_mapping/Dense7/bias'                        ],
-    'mapping.25.avg_style'     : ['any', 'dlatent_avg'                                  ],
+    'mapping.2.bias'           : ['any', 'G_mapping/Dense0/bias'                        ],
+    'mapping.5.weight'         : ['fc_', 'G_mapping/Dense1/weight'                      ],
+    'mapping.6.bias'           : ['any', 'G_mapping/Dense1/bias'                        ],
+    'mapping.9.weight'         : ['fc_', 'G_mapping/Dense2/weight'                      ],
+    'mapping.10.bias'          : ['any', 'G_mapping/Dense2/bias'                        ],
+    'mapping.13.weight'        : ['fc_', 'G_mapping/Dense3/weight'                      ],
+    'mapping.14.bias'          : ['any', 'G_mapping/Dense3/bias'                        ],
+    'mapping.17.weight'        : ['fc_', 'G_mapping/Dense4/weight'                      ],
+    'mapping.18.bias'          : ['any', 'G_mapping/Dense4/bias'                        ],
+    'mapping.21.weight'        : ['fc_', 'G_mapping/Dense5/weight'                      ],
+    'mapping.22.bias'          : ['any', 'G_mapping/Dense5/bias'                        ],
+    'mapping.25.weight'        : ['fc_', 'G_mapping/Dense6/weight'                      ],
+    'mapping.26.bias'          : ['any', 'G_mapping/Dense6/bias'                        ],
+    'mapping.29.weight'        : ['fc_', 'G_mapping/Dense7/weight'                      ],
+    'mapping.30.bias'          : ['any', 'G_mapping/Dense7/bias'                        ],
+    'mapping.33.avg_style'     : ['any', 'dlatent_avg'                                  ],
     'blocks.0.0.weight'        : ['con', 'G_synthesis/4x4/Conv/weight'                  ],
     'blocks.0.0.fc.weight'     : ['fc_', 'G_synthesis/4x4/Conv/mod_weight'              ],
-    'blocks.0.0.fc.bias'       : ['any', 'G_synthesis/4x4/Conv/mod_bias'                ],
+    'blocks.0.0.bias.bias'     : ['any', 'G_synthesis/4x4/Conv/mod_bias'                ],
     'blocks.0.1.noise_scaler'  : ['uns', 'G_synthesis/4x4/Conv/noise_strength'          ],
     'blocks.0.1.const_noise'   : ['any', 'G_synthesis/noise0'                           ],
     'blocks.0.2.bias'          : ['any', 'G_synthesis/4x4/Conv/bias'                    ],
     'blocks.1.0.weight'        : ['mTc', 'G_synthesis/8x8/Conv0_up/weight'              ],
     'blocks.1.0.fc.weight'     : ['fc_', 'G_synthesis/8x8/Conv0_up/mod_weight'          ],
-    'blocks.1.0.fc.bias'       : ['any', 'G_synthesis/8x8/Conv0_up/mod_bias'            ],
+    'blocks.1.0.bias.bias'     : ['any', 'G_synthesis/8x8/Conv0_up/mod_bias'            ],
     'blocks.1.2.noise_scaler'  : ['uns', 'G_synthesis/8x8/Conv0_up/noise_strength'      ],
     'blocks.1.2.const_noise'   : ['any', 'G_synthesis/noise1'                           ],
     'blocks.1.3.bias'          : ['any', 'G_synthesis/8x8/Conv0_up/bias'                ],
     'blocks.2.0.weight'        : ['con', 'G_synthesis/8x8/Conv1/weight'                 ],
     'blocks.2.0.fc.weight'     : ['fc_', 'G_synthesis/8x8/Conv1/mod_weight'             ],
-    'blocks.2.0.fc.bias'       : ['any', 'G_synthesis/8x8/Conv1/mod_bias'               ],
+    'blocks.2.0.bias.bias'     : ['any', 'G_synthesis/8x8/Conv1/mod_bias'               ],
     'blocks.2.1.noise_scaler'  : ['uns', 'G_synthesis/8x8/Conv1/noise_strength'         ],
     'blocks.2.1.const_noise'   : ['any', 'G_synthesis/noise2'                           ],
     'blocks.2.2.bias'          : ['any', 'G_synthesis/8x8/Conv1/bias'                   ],
     'blocks.3.0.weight'        : ['mTc', 'G_synthesis/16x16/Conv0_up/weight'            ],
     'blocks.3.0.fc.weight'     : ['fc_', 'G_synthesis/16x16/Conv0_up/mod_weight'        ],
-    'blocks.3.0.fc.bias'       : ['any', 'G_synthesis/16x16/Conv0_up/mod_bias'          ],
+    'blocks.3.0.bias.bias'     : ['any', 'G_synthesis/16x16/Conv0_up/mod_bias'          ],
     'blocks.3.2.noise_scaler'  : ['uns', 'G_synthesis/16x16/Conv0_up/noise_strength'    ],
     'blocks.3.2.const_noise'   : ['any', 'G_synthesis/noise3'                           ],
     'blocks.3.3.bias'          : ['any', 'G_synthesis/16x16/Conv0_up/bias'              ],
     'blocks.4.0.weight'        : ['con', 'G_synthesis/16x16/Conv1/weight'               ],
     'blocks.4.0.fc.weight'     : ['fc_', 'G_synthesis/16x16/Conv1/mod_weight'           ],
-    'blocks.4.0.fc.bias'       : ['any', 'G_synthesis/16x16/Conv1/mod_bias'             ],
+    'blocks.4.0.bias.bias'     : ['any', 'G_synthesis/16x16/Conv1/mod_bias'             ],
     'blocks.4.1.noise_scaler'  : ['uns', 'G_synthesis/16x16/Conv1/noise_strength'       ],
     'blocks.4.1.const_noise'   : ['any', 'G_synthesis/noise4'                           ],
     'blocks.4.2.bias'          : ['any', 'G_synthesis/16x16/Conv1/bias'                 ],
     'blocks.5.0.weight'        : ['mTc', 'G_synthesis/32x32/Conv0_up/weight'            ],
     'blocks.5.0.fc.weight'     : ['fc_', 'G_synthesis/32x32/Conv0_up/mod_weight'        ],
-    'blocks.5.0.fc.bias'       : ['any', 'G_synthesis/32x32/Conv0_up/mod_bias'          ],
+    'blocks.5.0.bias.bias'     : ['any', 'G_synthesis/32x32/Conv0_up/mod_bias'          ],
     'blocks.5.2.noise_scaler'  : ['uns', 'G_synthesis/32x32/Conv0_up/noise_strength'    ],
     'blocks.5.2.const_noise'   : ['any', 'G_synthesis/noise5'                           ],
     'blocks.5.3.bias'          : ['any', 'G_synthesis/32x32/Conv0_up/bias'              ],
     'blocks.6.0.weight'        : ['con', 'G_synthesis/32x32/Conv1/weight'               ],
     'blocks.6.0.fc.weight'     : ['fc_', 'G_synthesis/32x32/Conv1/mod_weight'           ],
-    'blocks.6.0.fc.bias'       : ['any', 'G_synthesis/32x32/Conv1/mod_bias'             ],
+    'blocks.6.0.bias.bias'     : ['any', 'G_synthesis/32x32/Conv1/mod_bias'             ],
     'blocks.6.1.noise_scaler'  : ['uns', 'G_synthesis/32x32/Conv1/noise_strength'       ],
     'blocks.6.1.const_noise'   : ['any', 'G_synthesis/noise6'                           ],
     'blocks.6.2.bias'          : ['any', 'G_synthesis/32x32/Conv1/bias'                 ],
     'blocks.7.0.weight'        : ['mTc', 'G_synthesis/64x64/Conv0_up/weight'            ],
     'blocks.7.0.fc.weight'     : ['fc_', 'G_synthesis/64x64/Conv0_up/mod_weight'        ],
-    'blocks.7.0.fc.bias'       : ['any', 'G_synthesis/64x64/Conv0_up/mod_bias'          ],
+    'blocks.7.0.bias.bias'     : ['any', 'G_synthesis/64x64/Conv0_up/mod_bias'          ],
     'blocks.7.2.noise_scaler'  : ['uns', 'G_synthesis/64x64/Conv0_up/noise_strength'    ],
     'blocks.7.2.const_noise'   : ['any', 'G_synthesis/noise7'                           ],
     'blocks.7.3.bias'          : ['any', 'G_synthesis/64x64/Conv0_up/bias'              ],
     'blocks.8.0.weight'        : ['con', 'G_synthesis/64x64/Conv1/weight'               ],
     'blocks.8.0.fc.weight'     : ['fc_', 'G_synthesis/64x64/Conv1/mod_weight'           ],
-    'blocks.8.0.fc.bias'       : ['any', 'G_synthesis/64x64/Conv1/mod_bias'             ],
+    'blocks.8.0.bias.bias'     : ['any', 'G_synthesis/64x64/Conv1/mod_bias'             ],
     'blocks.8.1.noise_scaler'  : ['uns', 'G_synthesis/64x64/Conv1/noise_strength'       ],
     'blocks.8.1.const_noise'   : ['any', 'G_synthesis/noise8'                           ],
     'blocks.8.2.bias'          : ['any', 'G_synthesis/64x64/Conv1/bias'                 ],
     'blocks.9.0.weight'        : ['mTc', 'G_synthesis/128x128/Conv0_up/weight'          ],
     'blocks.9.0.fc.weight'     : ['fc_', 'G_synthesis/128x128/Conv0_up/mod_weight'      ],
-    'blocks.9.0.fc.bias'       : ['any', 'G_synthesis/128x128/Conv0_up/mod_bias'        ],
+    'blocks.9.0.bias.bias'     : ['any', 'G_synthesis/128x128/Conv0_up/mod_bias'        ],
     'blocks.9.2.noise_scaler'  : ['uns', 'G_synthesis/128x128/Conv0_up/noise_strength'  ],
     'blocks.9.2.const_noise'   : ['any', 'G_synthesis/noise9'                           ],
     'blocks.9.3.bias'          : ['any', 'G_synthesis/128x128/Conv0_up/bias'            ],
     'blocks.10.0.weight'       : ['con', 'G_synthesis/128x128/Conv1/weight'             ],
     'blocks.10.0.fc.weight'    : ['fc_', 'G_synthesis/128x128/Conv1/mod_weight'         ],
-    'blocks.10.0.fc.bias'      : ['any', 'G_synthesis/128x128/Conv1/mod_bias'           ],
+    'blocks.10.0.bias.bias'    : ['any', 'G_synthesis/128x128/Conv1/mod_bias'           ],
     'blocks.10.1.noise_scaler' : ['uns', 'G_synthesis/128x128/Conv1/noise_strength'     ],
     'blocks.10.1.const_noise'  : ['any', 'G_synthesis/noise10'                          ],
     'blocks.10.2.bias'         : ['any', 'G_synthesis/128x128/Conv1/bias'               ],
     'blocks.11.0.weight'       : ['mTc', 'G_synthesis/256x256/Conv0_up/weight'          ],
     'blocks.11.0.fc.weight'    : ['fc_', 'G_synthesis/256x256/Conv0_up/mod_weight'      ],
-    'blocks.11.0.fc.bias'      : ['any', 'G_synthesis/256x256/Conv0_up/mod_bias'        ],
+    'blocks.11.0.bias.bias'    : ['any', 'G_synthesis/256x256/Conv0_up/mod_bias'        ],
     'blocks.11.2.noise_scaler' : ['uns', 'G_synthesis/256x256/Conv0_up/noise_strength'  ],
     'blocks.11.2.const_noise'  : ['any', 'G_synthesis/noise11'                          ],
     'blocks.11.3.bias'         : ['any', 'G_synthesis/256x256/Conv0_up/bias'            ],
     'blocks.12.0.weight'       : ['con', 'G_synthesis/256x256/Conv1/weight'             ],
     'blocks.12.0.fc.weight'    : ['fc_', 'G_synthesis/256x256/Conv1/mod_weight'         ],
-    'blocks.12.0.fc.bias'      : ['any', 'G_synthesis/256x256/Conv1/mod_bias'           ],
+    'blocks.12.0.bias.bias'    : ['any', 'G_synthesis/256x256/Conv1/mod_bias'           ],
     'blocks.12.1.noise_scaler' : ['uns', 'G_synthesis/256x256/Conv1/noise_strength'     ],
     'blocks.12.1.const_noise'  : ['any', 'G_synthesis/noise12'                          ],
     'blocks.12.2.bias'         : ['any', 'G_synthesis/256x256/Conv1/bias'               ],
     'blocks.13.0.weight'       : ['mTc', 'G_synthesis/512x512/Conv0_up/weight'          ],
     'blocks.13.0.fc.weight'    : ['fc_', 'G_synthesis/512x512/Conv0_up/mod_weight'      ],
-    'blocks.13.0.fc.bias'      : ['any', 'G_synthesis/512x512/Conv0_up/mod_bias'        ],
+    'blocks.13.0.bias.bias'    : ['any', 'G_synthesis/512x512/Conv0_up/mod_bias'        ],
     'blocks.13.2.noise_scaler' : ['uns', 'G_synthesis/512x512/Conv0_up/noise_strength'  ],
     'blocks.13.2.const_noise'  : ['any', 'G_synthesis/noise13'                          ],
     'blocks.13.3.bias'         : ['any', 'G_synthesis/512x512/Conv0_up/bias'            ],
     'blocks.14.0.weight'       : ['con', 'G_synthesis/512x512/Conv1/weight'             ],
     'blocks.14.0.fc.weight'    : ['fc_', 'G_synthesis/512x512/Conv1/mod_weight'         ],
-    'blocks.14.0.fc.bias'      : ['any', 'G_synthesis/512x512/Conv1/mod_bias'           ],
+    'blocks.14.0.bias.bias'    : ['any', 'G_synthesis/512x512/Conv1/mod_bias'           ],
     'blocks.14.1.noise_scaler' : ['uns', 'G_synthesis/512x512/Conv1/noise_strength'     ],
     'blocks.14.1.const_noise'  : ['any', 'G_synthesis/noise14'                          ],
     'blocks.14.2.bias'         : ['any', 'G_synthesis/512x512/Conv1/bias'               ],
     'blocks.15.0.weight'       : ['mTc', 'G_synthesis/1024x1024/Conv0_up/weight'        ],
     'blocks.15.0.fc.weight'    : ['fc_', 'G_synthesis/1024x1024/Conv0_up/mod_weight'    ],
-    'blocks.15.0.fc.bias'      : ['any', 'G_synthesis/1024x1024/Conv0_up/mod_bias'      ],
+    'blocks.15.0.bias.bias'    : ['any', 'G_synthesis/1024x1024/Conv0_up/mod_bias'      ],
     'blocks.15.2.noise_scaler' : ['uns', 'G_synthesis/1024x1024/Conv0_up/noise_strength'],
     'blocks.15.2.const_noise'  : ['any', 'G_synthesis/noise15'                          ],
     'blocks.15.3.bias'         : ['any', 'G_synthesis/1024x1024/Conv0_up/bias'          ],
     'blocks.16.0.weight'       : ['con', 'G_synthesis/1024x1024/Conv1/weight'           ],
     'blocks.16.0.fc.weight'    : ['fc_', 'G_synthesis/1024x1024/Conv1/mod_weight'       ],
-    'blocks.16.0.fc.bias'      : ['any', 'G_synthesis/1024x1024/Conv1/mod_bias'         ],
+    'blocks.16.0.bias.bias'    : ['any', 'G_synthesis/1024x1024/Conv1/mod_bias'         ],
     'blocks.16.1.noise_scaler' : ['uns', 'G_synthesis/1024x1024/Conv1/noise_strength'   ],
     'blocks.16.1.const_noise'  : ['any', 'G_synthesis/noise16'                          ],
     'blocks.16.2.bias'         : ['any', 'G_synthesis/1024x1024/Conv1/bias'             ],
     'toRGBs.0.0.weight'        : ['con', 'G_synthesis/4x4/ToRGB/weight'                 ],
     'toRGBs.0.0.fc.weight'     : ['fc_', 'G_synthesis/4x4/ToRGB/mod_weight'             ],
-    'toRGBs.0.0.fc.bias'       : ['any', 'G_synthesis/4x4/ToRGB/mod_bias'               ],
+    'toRGBs.0.0.bias.bias'     : ['any', 'G_synthesis/4x4/ToRGB/mod_bias'               ],
     'toRGBs.0.1.bias'          : ['any', 'G_synthesis/4x4/ToRGB/bias'                   ],
     'toRGBs.1.0.weight'        : ['con', 'G_synthesis/8x8/ToRGB/weight'                 ],
     'toRGBs.1.0.fc.weight'     : ['fc_', 'G_synthesis/8x8/ToRGB/mod_weight'             ],
-    'toRGBs.1.0.fc.bias'       : ['any', 'G_synthesis/8x8/ToRGB/mod_bias'               ],
+    'toRGBs.1.0.bias.bias'     : ['any', 'G_synthesis/8x8/ToRGB/mod_bias'               ],
     'toRGBs.1.1.bias'          : ['any', 'G_synthesis/8x8/ToRGB/bias'                   ],
     'toRGBs.2.0.weight'        : ['con', 'G_synthesis/16x16/ToRGB/weight'               ],
     'toRGBs.2.0.fc.weight'     : ['fc_', 'G_synthesis/16x16/ToRGB/mod_weight'           ],
-    'toRGBs.2.0.fc.bias'       : ['any', 'G_synthesis/16x16/ToRGB/mod_bias'             ],
+    'toRGBs.2.0.bias.bias'     : ['any', 'G_synthesis/16x16/ToRGB/mod_bias'             ],
     'toRGBs.2.1.bias'          : ['any', 'G_synthesis/16x16/ToRGB/bias'                 ],
     'toRGBs.3.0.weight'        : ['con', 'G_synthesis/32x32/ToRGB/weight'               ],
     'toRGBs.3.0.fc.weight'     : ['fc_', 'G_synthesis/32x32/ToRGB/mod_weight'           ],
-    'toRGBs.3.0.fc.bias'       : ['any', 'G_synthesis/32x32/ToRGB/mod_bias'             ],
+    'toRGBs.3.0.bias.bias'     : ['any', 'G_synthesis/32x32/ToRGB/mod_bias'             ],
     'toRGBs.3.1.bias'          : ['any', 'G_synthesis/32x32/ToRGB/bias'                 ],
     'toRGBs.4.0.weight'        : ['con', 'G_synthesis/64x64/ToRGB/weight'               ],
     'toRGBs.4.0.fc.weight'     : ['fc_', 'G_synthesis/64x64/ToRGB/mod_weight'           ],
-    'toRGBs.4.0.fc.bias'       : ['any', 'G_synthesis/64x64/ToRGB/mod_bias'             ],
+    'toRGBs.4.0.bias.bias'     : ['any', 'G_synthesis/64x64/ToRGB/mod_bias'             ],
     'toRGBs.4.1.bias'          : ['any', 'G_synthesis/64x64/ToRGB/bias'                 ],
     'toRGBs.5.0.weight'        : ['con', 'G_synthesis/128x128/ToRGB/weight'             ],
     'toRGBs.5.0.fc.weight'     : ['fc_', 'G_synthesis/128x128/ToRGB/mod_weight'         ],
-    'toRGBs.5.0.fc.bias'       : ['any', 'G_synthesis/128x128/ToRGB/mod_bias'           ],
+    'toRGBs.5.0.bias.bias'     : ['any', 'G_synthesis/128x128/ToRGB/mod_bias'           ],
     'toRGBs.5.1.bias'          : ['any', 'G_synthesis/128x128/ToRGB/bias'               ],
     'toRGBs.6.0.weight'        : ['con', 'G_synthesis/256x256/ToRGB/weight'             ],
     'toRGBs.6.0.fc.weight'     : ['fc_', 'G_synthesis/256x256/ToRGB/mod_weight'         ],
-    'toRGBs.6.0.fc.bias'       : ['any', 'G_synthesis/256x256/ToRGB/mod_bias'           ],
+    'toRGBs.6.0.bias.bias'     : ['any', 'G_synthesis/256x256/ToRGB/mod_bias'           ],
     'toRGBs.6.1.bias'          : ['any', 'G_synthesis/256x256/ToRGB/bias'               ],
     'toRGBs.7.0.weight'        : ['con', 'G_synthesis/512x512/ToRGB/weight'             ],
     'toRGBs.7.0.fc.weight'     : ['fc_', 'G_synthesis/512x512/ToRGB/mod_weight'         ],
-    'toRGBs.7.0.fc.bias'       : ['any', 'G_synthesis/512x512/ToRGB/mod_bias'           ],
+    'toRGBs.7.0.bias.bias'     : ['any', 'G_synthesis/512x512/ToRGB/mod_bias'           ],
     'toRGBs.7.1.bias'          : ['any', 'G_synthesis/512x512/ToRGB/bias'               ],
     'toRGBs.8.0.weight'        : ['con', 'G_synthesis/1024x1024/ToRGB/weight'           ],
     'toRGBs.8.0.fc.weight'     : ['fc_', 'G_synthesis/1024x1024/ToRGB/mod_weight'       ],
-    'toRGBs.8.0.fc.bias'       : ['any', 'G_synthesis/1024x1024/ToRGB/mod_bias'         ],
+    'toRGBs.8.0.bias.bias'     : ['any', 'G_synthesis/1024x1024/ToRGB/mod_bias'         ],
     'toRGBs.8.1.bias'          : ['any', 'G_synthesis/1024x1024/ToRGB/bias'             ],
 }

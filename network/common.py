@@ -41,16 +41,20 @@ class Amplify(nn.Module):
         return x * self.rate
 
 
-# チャンネルごとに畳み込みのバイアス項を足す
-class AddBias(nn.Module):
+# チャンネルごとにバイアス項を足す
+class AddChannelwiseBias(nn.Module):
     def __init__(self, out_channels, lr):
         super().__init__()
+        # lr = 1.0 (conv,mod,AdaIN), 0.01 (mapping)
+
         self.bias = nn.Parameter(torch.zeros(out_channels))
         torch.nn.init.zeros_(self.bias.data)
         self.bias_scaler = lr
+
     def forward(self, x):
         oC,*_ = self.bias.shape
-        y = x + self.bias.view(1,oC,1,1)*self.bias_scaler
+        shape = (1,oC) if x.ndim==2 else (1,oC,1,1)
+        y = x + self.bias.view(*shape)*self.bias_scaler
         return y
 
 
@@ -58,16 +62,12 @@ class AddBias(nn.Module):
 class EqualizedFullyConnect(nn.Module):
     def __init__(self, in_dim, out_dim, lr):
         super().__init__()
-        #gain, lr = 2**0.5, 0.01
-        
+        # lr = 0.01 (mapping), 1.0 (mod,AdaIN)
+
         self.weight = nn.Parameter(torch.randn((out_dim,in_dim)))
         torch.nn.init.normal_(self.weight.data, mean=0.0, std=1.0/lr)
         self.weight_scaler = 1/(in_dim**0.5)*lr
         
-        self.bias = nn.Parameter(torch.randn((out_dim,)))
-        torch.nn.init.zeros_(self.bias.data)
-        self.bias_scaler = lr
-
     def forward(self, x):
         # x (N,D)
-        return F.linear(x, self.weight*self.weight_scaler, self.bias*self.bias_scaler)
+        return F.linear(x, self.weight*self.weight_scaler, None)

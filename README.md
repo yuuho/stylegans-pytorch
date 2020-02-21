@@ -145,7 +145,6 @@ upsampleを行ってconvolutionをすると計算量的に重くなるので，
 ### ノイズの入れ方
 StyleGANでは全ピクセルに対してノイズを入れる．
 
-
 StyleGAN1では固定ノイズは (H,W) で保持しておいて，
 ノイズの重みを (C,) で保持．
 
@@ -154,7 +153,17 @@ StyleGAN2では固定ノイズは (H,W) で保持しておいて，
 
 ### 増幅
 StyleGAN1とStyleGAN2で増幅処理している場所が違う．
+元の実装では gain という変数に √2 などが設定されていて，
+convやfcの後に強制的に特徴マップを増幅していた．
+
+- StyleGAN1 mapping: linear -> gain -> bias
+- StyleGAN2 mapping: linear -> bias -> gain
+- StyleGAN1 conv : conv -> gain -> noise -> bias
+- StyleGAN2 conv : conv -> noise -> bias -> gain
+- StyleGAN1 toRGB : conv -> bias (増幅なし)
+- StyleGAN2 toRGB : conv -> bias (増幅なし)
+
 
 ## TODO
 - style mixingもやる
-- StyleGAN1 の結果が微妙なので原因特定する
+- リポジトリルートにある one_fileなスクリプトをリファクタリングする．

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common import PixelwiseNormalization, Amplify, AddBias, EqualizedFullyConnect, TruncationTrick
+from common import PixelwiseNormalization, Amplify, AddChannelwiseBias, EqualizedFullyConnect, TruncationTrick
 
 
 # 固定ノイズ
@@ -39,7 +39,7 @@ class Blur3x3(nn.Module):
 class EqualizedFusedConvTransposed2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding, lr):
         super().__init__()
-        #gain, lr = 2**0.5, 1.0
+        # lr = 1.0
 
         self.stride, self.padding = stride, padding
 
@@ -62,7 +62,7 @@ class EqualizedFusedConvTransposed2d(nn.Module):
 class EqualizedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding, lr):
         super().__init__()
-        #gain, lr = 2**0.5, 1.0
+        # lr = 1.0
 
         self.stride, self.padding = stride, padding
 
@@ -80,15 +80,16 @@ class EqualizedConv2d(nn.Module):
 class EqualizedAdaIN(nn.Module):
     def __init__(self, fmap_ch, style_ch, lr):
         super().__init__()
-        #gain, lr = 1.0, 1.0
+        # lr = 1.0
         self.fc = EqualizedFullyConnect(style_ch, fmap_ch*2, lr)
+        self.bias = AddChannelwiseBias(fmap_ch*2,lr)
 
     def forward(self, pack):
         x, style = pack
         #N,D = w.shape
         N,C,H,W = x.shape
 
-        _vec = self.fc(style).view(N,2*C,1,1) # (N,2C,1,1)
+        _vec = self.bias( self.fc(style) ).view(N,2*C,1,1) # (N,2C,1,1)
         scale, shift = _vec[:,:C,:,:], _vec[:,C:,:,:] # (N,C,1,1), (N,C,1,1)
         return (scale+1) * F.instance_norm(x, eps=1e-8) + shift
 
@@ -96,10 +97,10 @@ class EqualizedAdaIN(nn.Module):
 class Generator(nn.Module):
 
     structure = {
-        'mapping': [['pixel_norm'],['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],
-                                    ['fc',512,512],['amp'],['Lrelu'],['fc',512,512],['amp'],['Lrelu'],['truncation']],
+        'mapping': [['pixel_norm'], ['fc',512,512],['amp'],['b',512],['Lrelu'],['fc',512,512],['amp'],['b',512],['Lrelu'],
+                                    ['fc',512,512],['amp'],['b',512],['Lrelu'],['fc',512,512],['amp'],['b',512],['Lrelu'],
+                                    ['fc',512,512],['amp'],['b',512],['Lrelu'],['fc',512,512],['amp'],['b',512],['Lrelu'],
+                                    ['fc',512,512],['amp'],['b',512],['Lrelu'],['fc',512,512],['amp'],['b',512],['Lrelu'],['truncation']],
         'START'    : [                                                      ['noiseE',512,    4], ['bias',512], ['Lrelu'] ],  'adain4a'   : [['adain',512]],
         'Fconv4'   : [        ['EqConv3x3',512, 512],              ['amp'], ['noiseE',512,    4], ['bias',512], ['Lrelu'] ],  'adain4b'   : [['adain',512]],  'toRGB_4'   : [['EqConv1x1',512, 3], ['bias',3]],
         'Uconv8'   : [['up'], ['EqConv3x3',512, 512], ['blur3x3'], ['amp'], ['noiseE',512,    8], ['bias',512], ['Lrelu'] ],  'adain8a'   : [['adain',512]],
@@ -127,7 +128,8 @@ class Generator(nn.Module):
                                     num_target=8, threshold=0.7, output_num=18, style_dim=512 ),
             'fc'           :    lambda *config: EqualizedFullyConnect(
                                     in_dim=config[0],out_dim=config[1], lr=0.01),
-            'bias'         :    lambda *config: AddBias(out_channels=config[0], lr=1.0),
+            'b'            :    lambda *config: AddChannelwiseBias(out_channels=config[0], lr=0.01),
+            'bias'         :    lambda *config: AddChannelwiseBias(out_channels=config[0], lr=1.0),
             'amp'          :    lambda *config: Amplify(2**0.5),
             'Lrelu'        :    lambda *config: nn.LeakyReLU(negative_slope=0.2),
             'EqConvT3x3EX' :    lambda *config: EqualizedFusedConvTransposed2d(
@@ -186,11 +188,11 @@ class Generator(nn.Module):
         N,D = z.shape
 
         styles = self.mapping(z) # (N,18,D)
-        const = self.const.expand(N,512,4,4)
-
-        feat = [ (l.append(a( (c(l[-1]),styles[:,i,:]) )),l[-1])[1] for l in [[const]]
-                    for i,(a,c) in enumerate(zip(self.adains, self.blocks))][-1]
-        img = self.toRGBs[-1](feat)
+        tmp = self.const.expand(N,512,4,4)
+        for i, (adain, conv) in enumerate(zip(self.adains, self.blocks)):
+            tmp = conv(tmp)
+            tmp = adain( (tmp, styles[:,i,:]) )
+        img = self.toRGBs[-1](tmp)
 
         return img
 
@@ -202,22 +204,22 @@ name_trans_dict = {
     'image_mixing_rate'        : ['uns', 'G_synthesis/lod'                                   ],
     'style_mixing_rate'        : ['uns', 'lod'                                               ],
     'mapping.1.weight'         : ['fc_', 'G_mapping/Dense0/weight'                           ],
-    'mapping.1.bias'           : ['any', 'G_mapping/Dense0/bias'                             ],
-    'mapping.4.weight'         : ['fc_', 'G_mapping/Dense1/weight'                           ],
-    'mapping.4.bias'           : ['any', 'G_mapping/Dense1/bias'                             ],
-    'mapping.7.weight'         : ['fc_', 'G_mapping/Dense2/weight'                           ],
-    'mapping.7.bias'           : ['any', 'G_mapping/Dense2/bias'                             ],
-    'mapping.10.weight'        : ['fc_', 'G_mapping/Dense3/weight'                           ],
-    'mapping.10.bias'          : ['any', 'G_mapping/Dense3/bias'                             ],
-    'mapping.13.weight'        : ['fc_', 'G_mapping/Dense4/weight'                           ],
-    'mapping.13.bias'          : ['any', 'G_mapping/Dense4/bias'                             ],
-    'mapping.16.weight'        : ['fc_', 'G_mapping/Dense5/weight'                           ],
-    'mapping.16.bias'          : ['any', 'G_mapping/Dense5/bias'                             ],
-    'mapping.19.weight'        : ['fc_', 'G_mapping/Dense6/weight'                           ],
-    'mapping.19.bias'          : ['any', 'G_mapping/Dense6/bias'                             ],
-    'mapping.22.weight'        : ['fc_', 'G_mapping/Dense7/weight'                           ],
-    'mapping.22.bias'          : ['any', 'G_mapping/Dense7/bias'                             ],
-    'mapping.25.avg_style'     : ['any', 'dlatent_avg'                                       ],
+    'mapping.3.bias'           : ['any', 'G_mapping/Dense0/bias'                             ],
+    'mapping.5.weight'         : ['fc_', 'G_mapping/Dense1/weight'                           ],
+    'mapping.7.bias'           : ['any', 'G_mapping/Dense1/bias'                             ],
+    'mapping.9.weight'         : ['fc_', 'G_mapping/Dense2/weight'                           ],
+    'mapping.11.bias'          : ['any', 'G_mapping/Dense2/bias'                             ],
+    'mapping.13.weight'        : ['fc_', 'G_mapping/Dense3/weight'                           ],
+    'mapping.15.bias'          : ['any', 'G_mapping/Dense3/bias'                             ],
+    'mapping.17.weight'        : ['fc_', 'G_mapping/Dense4/weight'                           ],
+    'mapping.19.bias'          : ['any', 'G_mapping/Dense4/bias'                             ],
+    'mapping.21.weight'        : ['fc_', 'G_mapping/Dense5/weight'                           ],
+    'mapping.23.bias'          : ['any', 'G_mapping/Dense5/bias'                             ],
+    'mapping.25.weight'        : ['fc_', 'G_mapping/Dense6/weight'                           ],
+    'mapping.27.bias'          : ['any', 'G_mapping/Dense6/bias'                             ],
+    'mapping.29.weight'        : ['fc_', 'G_mapping/Dense7/weight'                           ],
+    'mapping.31.bias'          : ['any', 'G_mapping/Dense7/bias'                             ],
+    'mapping.33.avg_style'     : ['any', 'dlatent_avg'                                       ],
     'blocks.0.0.noise_scaler'  : ['any', 'G_synthesis/4x4/Const/Noise/weight'                ],
     'blocks.0.0.const_noise'   : ['any', 'G_synthesis/noise0'                                ],
     'blocks.0.1.bias'          : ['any', 'G_synthesis/4x4/Const/bias'                        ],
@@ -290,41 +292,41 @@ name_trans_dict = {
     'blocks.17.2.const_noise'  : ['any', 'G_synthesis/noise17'                               ],
     'blocks.17.3.bias'         : ['any', 'G_synthesis/1024x1024/Conv1/bias'                  ],
     'adains.0.0.fc.weight'     : ['fc_', 'G_synthesis/4x4/Const/StyleMod/weight'             ],
-    'adains.0.0.fc.bias'       : ['any', 'G_synthesis/4x4/Const/StyleMod/bias'               ],
+    'adains.0.0.bias.bias'     : ['any', 'G_synthesis/4x4/Const/StyleMod/bias'               ],
     'adains.1.0.fc.weight'     : ['fc_', 'G_synthesis/4x4/Conv/StyleMod/weight'              ],
-    'adains.1.0.fc.bias'       : ['any', 'G_synthesis/4x4/Conv/StyleMod/bias'                ],
+    'adains.1.0.bias.bias'     : ['any', 'G_synthesis/4x4/Conv/StyleMod/bias'                ],
     'adains.2.0.fc.weight'     : ['fc_', 'G_synthesis/8x8/Conv0_up/StyleMod/weight'          ],
-    'adains.2.0.fc.bias'       : ['any', 'G_synthesis/8x8/Conv0_up/StyleMod/bias'            ],
+    'adains.2.0.bias.bias'     : ['any', 'G_synthesis/8x8/Conv0_up/StyleMod/bias'            ],
     'adains.3.0.fc.weight'     : ['fc_', 'G_synthesis/8x8/Conv1/StyleMod/weight'             ],
-    'adains.3.0.fc.bias'       : ['any', 'G_synthesis/8x8/Conv1/StyleMod/bias'               ],
+    'adains.3.0.bias.bias'     : ['any', 'G_synthesis/8x8/Conv1/StyleMod/bias'               ],
     'adains.4.0.fc.weight'     : ['fc_', 'G_synthesis/16x16/Conv0_up/StyleMod/weight'        ],
-    'adains.4.0.fc.bias'       : ['any', 'G_synthesis/16x16/Conv0_up/StyleMod/bias'          ],
+    'adains.4.0.bias.bias'     : ['any', 'G_synthesis/16x16/Conv0_up/StyleMod/bias'          ],
     'adains.5.0.fc.weight'     : ['fc_', 'G_synthesis/16x16/Conv1/StyleMod/weight'           ],
-    'adains.5.0.fc.bias'       : ['any', 'G_synthesis/16x16/Conv1/StyleMod/bias'             ],
+    'adains.5.0.bias.bias'     : ['any', 'G_synthesis/16x16/Conv1/StyleMod/bias'             ],
     'adains.6.0.fc.weight'     : ['fc_', 'G_synthesis/32x32/Conv0_up/StyleMod/weight'        ],
-    'adains.6.0.fc.bias'       : ['any', 'G_synthesis/32x32/Conv0_up/StyleMod/bias'          ],
+    'adains.6.0.bias.bias'     : ['any', 'G_synthesis/32x32/Conv0_up/StyleMod/bias'          ],
     'adains.7.0.fc.weight'     : ['fc_', 'G_synthesis/32x32/Conv1/StyleMod/weight'           ],
-    'adains.7.0.fc.bias'       : ['any', 'G_synthesis/32x32/Conv1/StyleMod/bias'             ],
+    'adains.7.0.bias.bias'     : ['any', 'G_synthesis/32x32/Conv1/StyleMod/bias'             ],
     'adains.8.0.fc.weight'     : ['fc_', 'G_synthesis/64x64/Conv0_up/StyleMod/weight'        ],
-    'adains.8.0.fc.bias'       : ['any', 'G_synthesis/64x64/Conv0_up/StyleMod/bias'          ],
+    'adains.8.0.bias.bias'     : ['any', 'G_synthesis/64x64/Conv0_up/StyleMod/bias'          ],
     'adains.9.0.fc.weight'     : ['fc_', 'G_synthesis/64x64/Conv1/StyleMod/weight'           ],
-    'adains.9.0.fc.bias'       : ['any', 'G_synthesis/64x64/Conv1/StyleMod/bias'             ],
+    'adains.9.0.bias.bias'     : ['any', 'G_synthesis/64x64/Conv1/StyleMod/bias'             ],
     'adains.10.0.fc.weight'    : ['fc_', 'G_synthesis/128x128/Conv0_up/StyleMod/weight'      ],
-    'adains.10.0.fc.bias'      : ['any', 'G_synthesis/128x128/Conv0_up/StyleMod/bias'        ],
+    'adains.10.0.bias.bias'    : ['any', 'G_synthesis/128x128/Conv0_up/StyleMod/bias'        ],
     'adains.11.0.fc.weight'    : ['fc_', 'G_synthesis/128x128/Conv1/StyleMod/weight'         ],
-    'adains.11.0.fc.bias'      : ['any', 'G_synthesis/128x128/Conv1/StyleMod/bias'           ],
+    'adains.11.0.bias.bias'    : ['any', 'G_synthesis/128x128/Conv1/StyleMod/bias'           ],
     'adains.12.0.fc.weight'    : ['fc_', 'G_synthesis/256x256/Conv0_up/StyleMod/weight'      ],
-    'adains.12.0.fc.bias'      : ['any', 'G_synthesis/256x256/Conv0_up/StyleMod/bias'        ],
+    'adains.12.0.bias.bias'    : ['any', 'G_synthesis/256x256/Conv0_up/StyleMod/bias'        ],
     'adains.13.0.fc.weight'    : ['fc_', 'G_synthesis/256x256/Conv1/StyleMod/weight'         ],
-    'adains.13.0.fc.bias'      : ['any', 'G_synthesis/256x256/Conv1/StyleMod/bias'           ],
+    'adains.13.0.bias.bias'    : ['any', 'G_synthesis/256x256/Conv1/StyleMod/bias'           ],
     'adains.14.0.fc.weight'    : ['fc_', 'G_synthesis/512x512/Conv0_up/StyleMod/weight'      ],
-    'adains.14.0.fc.bias'      : ['any', 'G_synthesis/512x512/Conv0_up/StyleMod/bias'        ],
+    'adains.14.0.bias.bias'    : ['any', 'G_synthesis/512x512/Conv0_up/StyleMod/bias'        ],
     'adains.15.0.fc.weight'    : ['fc_', 'G_synthesis/512x512/Conv1/StyleMod/weight'         ],
-    'adains.15.0.fc.bias'      : ['any', 'G_synthesis/512x512/Conv1/StyleMod/bias'           ],
+    'adains.15.0.bias.bias'    : ['any', 'G_synthesis/512x512/Conv1/StyleMod/bias'           ],
     'adains.16.0.fc.weight'    : ['fc_', 'G_synthesis/1024x1024/Conv0_up/StyleMod/weight'    ],
-    'adains.16.0.fc.bias'      : ['any', 'G_synthesis/1024x1024/Conv0_up/StyleMod/bias'      ],
+    'adains.16.0.bias.bias'    : ['any', 'G_synthesis/1024x1024/Conv0_up/StyleMod/bias'      ],
     'adains.17.0.fc.weight'    : ['fc_', 'G_synthesis/1024x1024/Conv1/StyleMod/weight'       ],
-    'adains.17.0.fc.bias'      : ['any', 'G_synthesis/1024x1024/Conv1/StyleMod/bias'         ],
+    'adains.17.0.bias.bias'    : ['any', 'G_synthesis/1024x1024/Conv1/StyleMod/bias'         ],
     'toRGBs.0.0.weight'        : ['con', 'G_synthesis/ToRGB_lod8/weight'                     ],
     'toRGBs.0.1.bias'          : ['any', 'G_synthesis/ToRGB_lod8/bias'                       ],
     'toRGBs.1.0.weight'        : ['con', 'G_synthesis/ToRGB_lod7/weight'                     ],
