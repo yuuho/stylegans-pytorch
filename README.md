@@ -209,6 +209,92 @@ convやfcの後に強制的に特徴マップを増幅していた．
 - StyleGAN2 toRGB : conv -> bias (増幅なし)
 
 
+
+
+
+## Waifu
+
+著者の学習させたFFHQモデルが動作するのは確認したので第三者によって学習させたモデルが動くか試してみます．
+[Making Anime Faces With StyleGAN - Gwern](https://www.gwern.net/Faces) に
+二次元キャラクター生成用の学習済みモデルがあるのでこれを使います．
+
+### モデルのダウンロード・配置
+4つの学習済みモデルが配布されているのを見つけたのでこれで試します．
+
+1. Face StyleGANv1 (This Waifu Does Not Exist v1) 512px Danbooru2017 (train 218,794)  
+[2019-02-26-stylegan-faces-network-02048-016041.pkl](https://mega.nz/#!aPRFDKaC!FDpQi_FEPK443JoRBEOEDOmlLmJSblKFlqZ1A1XPt2Y)
+2. Face StyleGANv1 512px  
+[2019-03-08-stylegan-animefaces-network-02051-021980.pkl.xz](https://mega.nz/#!vawjXISI!F7s13yRicxDA3QYqYDL2kjnc2K7Zk3DwCIYETREmBP4)
+3. Portrait StyleGANv1 512px  
+[2019-04-30-stylegan-danbooru2018-portraits-02095-066083.pkl](https://mega.nz/#!CRtiDI7S!xo4zm3n7pkq1Lsfmuio1O8QPpUwHrtFTHjNJ8_XxSJs)
+4. Portrait StyleGANv2 (This Waifu Does Not Exist v3) 512px   
+[2020-01-11-skylion-stylegan2-animeportraits-networksnapshot-024664.pkl.xz](https://mega.nz/#!PeIi2ayb!xoRtjTXyXuvgDxSsSMn-cOh-Zux9493zqdxwVMaAzp4)
+
+StyleGANv1では (1) Faceを学習させたもの，(2) そこから更に学習させたもの，(3) Portraitを学習させたもの，の3つがあるようです．  
+StyleGANv2では (4) Portraitを学習させたもの，が1つあります．
+Faceはクローズ・アップぐらいの構図，Portraitはアップ・ショットぐらいの構図のようです．
+
+圧縮されているものは解凍して以下のように配置します．
+```
+- /wherever/you/want/
+    - 2019-02-26-stylegan-faces-network-02048-016041.pkl
+    - 2019-03-08-stylegan-animefaces-network-02051-021980.pkl
+    - 2019-04-30-stylegan-danbooru2018-portraits-02095-066083.pkl
+    - 2020-01-11-skylion-stylegan2-animeportraits-networksnapshot-024664.pkl
+```
+
+### 重みの変換・画像の生成
+
+``waifu`` ディレクトリに雑に書き換えたものを置いておきました．
+
+#### tensorflowで重みを変換
+
+``workdir`` で
+```
+cp stylegans-pytorch/waifu/converter.py stylegan/
+cd stylegan
+python converter.py 1 face_v1_1 -w $STYLEGANSDIR -o $STYLEGANSDIR
+python converter.py 1 face_v1_2 -w $STYLEGANSDIR -o $STYLEGANSDIR
+python converter.py 1 portrait_v1 -w $STYLEGANSDIR -o $STYLEGANSDIR
+cd -
+
+cp stylegans-pytorch/waifu/converter.py stylegan2/
+docker run --gpus all -v $PWD/stylegan2:/workdir \
+            -w /workdir -v $STYLEGANSDIR:/stylegans-pytorch \
+            -it --rm tkarras/stylegan2:latest
+CUDA_VISIBLE_DEVICES=0 python converter.py 2 portrait_v2 -w /stylegans-pytorch -o /stylegans-pytorch
+exit
+sudo chown -R $(whoami) $STYLEGANSDIR
+```
+
+#### pytorchで読み込んで画像生成
+
+``workdir`` で
+```
+python stylegans-pytorch/waifu/run_pt_stylegan.py 1 face_v1_1 -w $STYLEGANSDIR -o $STYLEGANSDIR
+python stylegans-pytorch/waifu/run_pt_stylegan.py 1 face_v1_2 -w $STYLEGANSDIR -o $STYLEGANSDIR
+python stylegans-pytorch/waifu/run_pt_stylegan.py 1 portrait_v1 -w $STYLEGANSDIR -o $STYLEGANSDIR
+python stylegans-pytorch/waifu/run_pt_stylegan.py 2 portrait_v2 -w $STYLEGANSDIR -o $STYLEGANSDIR
+```
+
+### 結果
+うまくいったようです．
+
+左: オリジナル出力, 右: 再現出力
+
+- (1) anime_face_v1_1
+![anime_face_v1_1](./img/waifu/anime_face_v1_1.jpg)
+
+- (2) anime_face_v1_2
+![anime_face_v1_2](./img/waifu/anime_face_v1_2.jpg)
+
+- (3) anime_portrait_v1
+![anime_portrait_v1](./img/waifu/anime_portrait_v1.jpg)
+
+- (4) anime_portrait_v2
+![anime_portrait_v2](./img/waifu/anime_portrait_v2.jpg)
+
 ## TODO
 - style mixingもやる
 - StyleGANv2 の色味が違う原因を特定
+
