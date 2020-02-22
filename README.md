@@ -38,6 +38,7 @@ StyleGANv1,StyleGANv2の違う部分だけを確認しやすいようにして�
     - stylegans-pytorch/    本リポジトリ
         - img/              : 再現結果
         - network/          : StyleGANの構造 (PyTorch) 
+        - waifu/            : アニメ顔生成の学習済みモデルを動かすのに利用
         - packaged/         : StyleGANを動作させるコード (tf/pt) 1ファイルにまとめられている
         - conda_env.txt     : 動作確認済み環境
         - docker_install.md : Dockerインストール方法について
@@ -209,8 +210,7 @@ convやfcの後に強制的に特徴マップを増幅していた．
 - StyleGAN2 toRGB : conv -> bias (増幅なし)
 
 
-
-
+---
 
 ## Waifu
 
@@ -297,4 +297,6 @@ python stylegans-pytorch/waifu/run_pt_stylegan.py 2 portrait_v2 -w $STYLEGANSDIR
 ## TODO
 - style mixingもやる
 - StyleGANv2 の色味が違う原因を特定
+- projection
+- train
 
