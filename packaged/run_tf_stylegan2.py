@@ -18,7 +18,11 @@ def parse_args():
                             help='学習済みのモデルを保存する場所')
     parser.add_argument('-o','--output_dir',type=str,default='/tmp/stylegans-pytorch',
                             help='生成された画像を保存する場所')
-    return parser.parse_args()
+    parser.add_argument('--batch_size',type=int,default=1,
+                            help='バッチサイズ')
+    args = parser.parse_args()
+    args.resolution = 1024
+    return args
 
 
 # tensorflowの初期化
@@ -77,8 +81,8 @@ def generate_images(args):
     
     # 出力する個数，解像度
     num_H, num_W = 4,4
-    num_images = num_H*num_W
-    H = W = 1024
+    N = num_images = num_H*num_W
+    H = W = args.resolution
     
     # 出力を並べる関数
     def make_table(imgs):
@@ -89,15 +93,21 @@ def generate_images(args):
         return canvas
 
     # 乱数シードを固定，潜在変数の取得・保存
-    latents = np.random.RandomState(5).randn(num_images, 512)
+    latents = np.random.RandomState(5).randn(N, 512)
     with (Path(args.output_dir)/file_names['used_latents']).open('wb') as f:
         pickle.dump(latents, f)
 
-    images = Gs.run(latents, None, truncation_psi=0.7, randomize_noise=False,
-                        output_transform= {'func': convert_images_to_uint8})
+    images = np.empty((N,args.resolution,args.resolution,3),dtype=np.uint8)
+    for i in range(0, N, args.batch_size):
+        j = min(i+args.batch_size, N)
+        z = latents[i:j]
+        images[i:j] = Gs.run(z, None, truncation_psi=0.7, randomize_noise=False,
+                            output_transform= {'func': convert_images_to_uint8})
 
     # 画像の保存
     PIL.Image.fromarray(make_table(images)).save(Path(args.output_dir)/file_names['output_image'])
+
+    print('all done')
 
 
 if __name__ == '__main__':

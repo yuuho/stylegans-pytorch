@@ -32,6 +32,10 @@ StyleGANv1とStyleGANv2でコードを共通化せず
 PyTorch再現実装版はコードの共通化をしたものも用意してあり，
 StyleGANv1,StyleGANv2の違う部分だけを確認しやすいようにしておきました．
 
+**注意** : tensorflowから重みを変換するにはGPUが必要です．(4GB以上)  
+GPUをお持ちでない方は [StyleGAN2による画像生成をCPU環境/TensorFlow.jsで動かす](https://memo.sugyan.com/entry/2020/02/06/005441) を参考に
+色々と著者コードを書き換えて対応してください．
+
 ### ディレクトリの構成
 ```
 - workdir/
@@ -299,4 +303,3 @@ python stylegans-pytorch/waifu/run_pt_stylegan.py 2 portrait_v2 -w $STYLEGANSDIR
 - StyleGANv2 の色味が違う原因を特定
 - projection
 - train
-

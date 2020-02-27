@@ -19,7 +19,13 @@ def parse_args():
                             help='学習済みのモデルを保存する場所')
     parser.add_argument('-o','--output_dir',type=str,default='/tmp/stylegans-pytorch',
                             help='生成された画像を保存する場所')
-    return parser.parse_args()
+    parser.add_argument('--batch_size',type=int,default=1,
+                            help='バッチサイズ')
+    parser.add_argument('--device',type=str,default='gpu',choices=['gpu','cpu'],
+                            help='デバイス')
+    args = parser.parse_args()
+    args.resolution = 512
+    return args
 
 
 # 変換関数
@@ -98,22 +104,29 @@ if __name__ == '__main__':
     latents = torch.from_numpy(latents.astype(np.float32))
 
     print('network forward...')
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    device = torch.device('cuda') if torch.cuda.is_available() and args.device=='gpu' else torch.device('cpu')
     with torch.no_grad():
-        z = latents.to(device)
+        N,_ = latents.shape
         generator.to(device)
-        img = generator(z)
-        normalized = (img.clamp(-1,1)+1)/2*255
-        images = normalized.permute(0,2,3,1).cpu().numpy().astype(np.uint8)
+        images = np.empty((N,args.resolution,args.resolution,3),dtype=np.uint8)
+
+        for i in range(0,N,args.batch_size):
+            j = min(i+args.batch_size,N)
+            z = latents[i:j].to(device)
+            img = generator(z)
+            normalized = (img.clamp(-1,1)+1)/2*255
+            images[i:j] = normalized.permute(0,2,3,1).cpu().numpy().astype(np.uint8)
+            del z, img, normalized
 
     # 出力を並べる関数
     def make_table(imgs):
         # 出力する個数，解像度
         num_H, num_W = 4,4
-        H = W = 512
+        H = W = args.resolution
+        num_images = num_H*num_W
 
         canvas = np.zeros((H*num_H,W*num_W,3),dtype=np.uint8)
-        for i,p in enumerate(imgs):
+        for i,p in enumerate(imgs[:num_images]):
             h,w = i//num_W, i%num_W
             canvas[H*h:H*-~h,W*w:W*-~w,:] = p[:,:,::-1]
         return canvas
