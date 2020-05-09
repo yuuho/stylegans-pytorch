@@ -149,12 +149,13 @@ class EqualizedModulatedConvTranspose2d(nn.Module):
         N, iC, H, W = x.shape
         iC, oC, kH, kW = self.weight.shape
 
-        mod_rates = self.bias(self.fc(style))+1
-        modulated_weight = self.weight_scaler*self.weight.view(1,iC,oC,kH,kW) * mod_rates.view(N,iC,1,1,1)
+        mod_rates = self.bias(self.fc(style))+1 # (N, iC)
+        modulated_weight = self.weight_scaler*self.weight.view(1,iC,oC,kH,kW) \
+                                * mod_rates.view(N,iC,1,1,1) # (N,iC,oC,kH,kW)
 
         if self.demodulate:
             demod_norm = 1 / ((modulated_weight**2).sum([1,3,4]) + 1e-8)**0.5 # (N, oC)
-            weight = modulated_weight * demod_norm.view(N, 1, oC, 1, 1) # (N,oC,iC,kH,kW)
+            weight = modulated_weight * demod_norm.view(N, 1, oC, 1, 1) # (N,iC,oC,kH,kW)
         else:
             weight = modulated_weight
 
