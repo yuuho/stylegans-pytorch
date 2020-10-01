@@ -1,13 +1,19 @@
 # stylegans-pytorch
 ![License CC BY-NC](https://img.shields.io/badge/license-CC_BY--NC-green.svg?style=plastic)
 
+- pure pytorch python implementation
+- doesn't need operation implemented by cuda
+
 **やったこと**  
 著者実装の学習済みStyleGAN ([v1](https://github.com/NVlabs/stylegan),[v2](https://github.com/NVlabs/stylegan2))の
 重みを変換してPyTorch再現実装のモデルで同じ出力を得るまで．
 
-学習済みモデルからの重みの抽出も著者コードに依存しない形で実装しようと考えたが，
+- 著者配布学習済み重み( tensorflow )を pytorch 実装モデルで動かせるように変換する
+- 変換済み著者配布重みを使用して pytorch 実装モデルで画像生成
+
+> 学習済みモデルからの重みの抽出を著者コードに依存しない形で実装しようと考えたが，
 配布されている学習済みモデルpickleの内部で色々と参照されているので，
-再現ができたかの確認や重みの変換には著者コード(TensorFlow実装)が必要である．
+再現ができたかの確認や重みの変換には著者コード(TensorFlow実装)が必須である．
 
 ## 再現結果
 
@@ -21,12 +27,13 @@
 ![pt_stylegan2結果圧縮画像](./img/stylegan2_pt_compression.jpg)
 
 ## ディレクトリ構成
+
 ### はじめに
 著者配布の学習済みモデルから重みを抽出するには
-著者配布コードを利用するしかありません．
-オリジナルのリポジトリを clone してここにあるコードをコピーして使ってください．  
+著者配布コードを利用するしかない．
+オリジナルのリポジトリを clone して，ここにあるコードをコピーして使ってください．  
 依存環境が把握しやすいように，
-StyleGANv1とStyleGANv2でコードを共通化せず
+StyleGANv1 と StyleGANv2 でコードを共通化せず
 全てのコードを1ファイルにまとめてあります．  
 同様の形式でPyTorch再現実装版も1ファイルにまとめたものを用意しておきました．  
 PyTorch再現実装版はコードの共通化をしたものも用意してあり，
@@ -54,21 +61,40 @@ GPUをお持ちでない方は [StyleGAN2による画像生成をCPU環境/Tenso
     - stylegan2-ffhq-config-f.pkl           : 著者配布学習済みモデル for StyleGANv2
 ```
 
-### 入出力用ディレクトリ
-重みの変換/再現の確認の際に以下のものが入力/出力される (以下の表はStyleGANv2のもの)
+### 概要
 
-| dir type | tf | pt | summary | file name | detail |
-| --- | --- | --- | ---- | ---- | ---- |
-| w | IN  | -   | 学習済みモデル | ``stylegan2-ffhq-config-f.pkl`` | 配布されているものをダウンロード                |
-| w | OUT | IN  | 学習済みモデル | ``stylegan2_ndarray.pkl``       | ``run_tf_stylegan2.py``でnumpy形式に変換        |
-| o | OUT | IN  | 入力潜在変数   | ``latent2.pkl``                 | ``run_tf_stylegan2.py``で使用したものを記録     |
-| o | OUT | IN  | 出力結果写真   | ``stylegan2_tf.png``            | ``run_tf_stylegan2.py``で著者実装モデルから出力 |
-| o | -   | OUT | 出力結果写真   | ``stylegan2_pt.png``            | ``run_pt_stylegan2.py``で本実装から出力         |
-| w | -   | OUT | 学習済みモデル | ``stylegan2_state_dict.pth``    | ``run_pt_stylegan2.py``でnumpy形式から変換      |
+2つのステップ (``run_tf_stylegan2.py`` & ``run_pt_stylegan2.py`` ) を踏む必要がある
+1. 重みの変換 ``tf`` : 著者配布 tensorflowコード & 重みを使って pytorch で使える重みを得る
+2. 画像の生成 ``pt`` : 本リポジトリのコードと pytorch用重みを使って画像を生成
 
-- dir type : w = weight directory, o = output directory  
+- ``run_tf_stylegan2.py``
+    - 著者配布モデル ``stylegan2-ffhq-config-f.pkl`` を numpy形式 ``stylegan2_ndarray.pkl`` に変換
+    - 潜在ベクトルを決めて ``latent2.pkl`` として保存
+    - 潜在ベクトルから画像を生成して ``stylegan2_tf.png`` として保存
+- ``run_pt_stylegan2.py``
+    - numpy形式 ``stylegan2_ndarray.pkl`` を pytorch形式 ``stylegan2_state_dict.pth`` に変換
+    - 潜在ベクトルを読み込んで画像生成し ``stylegan2_pt.png`` として保存
+
+### 入出力用ディレクトリについて
+重みの変換/再現の確認の際に以下のものが入力/出力される (以下の表は StyleGANv2 のもの)
+
+``run_tf_stylegan2.py`` , ``run_pt_stylegan2.py`` の各プログラムには
+オプションとして ``-w`` ( weight directory ) と ``-o`` ( output directory ) を指定する必要がある．
+
+- dir : ``w`` = weight directory, ``o`` = output directory  
 それぞれ別のディレクトリを指定することができる．
-以下で説明する使い方では w と o は同じディレクトリとしている．
+後で説明する使い方では w と o は同じディレクトリにしている．
+- ``tf`` と ``pt`` はそれぞれ ``run_tf_stylegan2.py`` と ``run_pt_stylegan2.py`` の入出力ファイルを表している．
+
+| dir | tf | pt | summary | file name | detail |
+| --- | --- | --- | ---- | ---- | ---- |
+| w | IN  | -   | 学習済みモデル | ``stylegan2-ffhq-config-f.pkl`` | 配布されているものをダウンロード                    |
+| w | OUT | IN  | 学習済みモデル | ``stylegan2_ndarray.pkl``       | ``run_tf_stylegan2.py``でnumpy形式に変換            |
+| o | OUT | IN  | 入力潜在変数   | ``latent2.pkl``                 | ``run_tf_stylegan2.py``で使用した潜在ベクトルを記録 |
+| o | OUT | IN  | 出力結果写真   | ``stylegan2_tf.png``            | ``run_tf_stylegan2.py``で著者実装モデルから出力     |
+| o | -   | OUT | 出力結果写真   | ``stylegan2_pt.png``            | ``run_pt_stylegan2.py``で本実装から出力             |
+| w | -   | OUT | 学習済みモデル | ``stylegan2_state_dict.pth``    | ``run_pt_stylegan2.py``でnumpy形式から変換          |
+
 
 ---
 
@@ -91,16 +117,16 @@ mkdir -p $STYLEGANSDIR
 ```
 
 **注意**  
-このスクリプトは正常に動いていたが，
-Googleドライブはダウンロード回数制限がある(？)ためか動かないことがあります．
+このスクリプトは通常は正常に動くはずだが，
+Googleドライブ側に一日あたりのダウンロード回数制限がある(？)ためか動かないことがあります．
 GUIのブラウザから直接アクセスするほうが良いかもしれません．
 
 
 ### 3. コードの用意
 著者オリジナル実装と本レポジトリをダウンロード.
 ```
-mkdir stylegans
-cd stylegans
+mkdir workdir
+cd workdir
 git clone https://github.com/NVlabs/stylegan.git
 git clone https://github.com/NVlabs/stylegan2.git
 git clone https://github.com/yuuho/stylegans-pytorch.git
@@ -114,15 +140,13 @@ conda install -y -n stylegans moviepy -c conda-forge
 conda activate stylegans
 ```
 
-実行した環境を残しておいた
+~~実行した環境を残しておいた
 (``conda list --export > conda_env.txt``)ので
 以下で構築しても良い．
-```
-conda create -y -n stylegans -f conda_env.txt
-```
+``conda env create -n stylegans -f stylegans-pytorch/conda_env.txt``~~
 
 StyleGANv2のほうは，著者オリジナル実装(tensorflow)は
-CUDAコードが含まれておりnvccによるコンパイル環境が必要なのでDockerのが良い．
+CUDAコードが含まれておりnvccによるコンパイル環境が必要なのでDockerのほうが良い．
 rootless環境でも動くはず．rootlessやりたい場合は [インストール方法](docker_install.md) を見る．
 
 Dockerイメージのビルドは ``workdir``で
